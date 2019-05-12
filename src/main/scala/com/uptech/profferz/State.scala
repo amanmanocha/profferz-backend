@@ -4,4 +4,4 @@ trait Event
 trait Command
 
 case class Acknowledged(id: String)
-case class Error(id: String, message: String)
+case class Error(e: Exception)

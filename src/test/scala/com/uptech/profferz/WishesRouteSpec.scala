@@ -27,6 +27,42 @@ class WishesRouteSpec extends WordSpec with Matchers with ScalaFutures with Scal
       }
     }
 
+    "not allow empty subject (POST /wishes)" in {
+      val wishDetails = WishDetails("", "Need ICICI bank card to buy an iPhone")
+      val wishDetailsEntity = Marshal(wishDetails).to[MessageEntity].futureValue
+
+      val request = Post("/wishes").withEntity(wishDetailsEntity)
+
+      request ~> addHeader("X-User-Id", "aman") ~> route ~> check {
+        status should ===(StatusCodes.BadRequest)
+      }
+    }
+
+    "not allow large subject (POST /wishes)" in {
+      val wishDetails = WishDetails("Need ICICI Bank Card", "Need ICICI bank card to buy an iPhone." +
+                                                            "Need ICICI bank card to buy an iPhone." +
+                                                            "Need ICICI bank card to buy an iPhone." +
+                                                            "Need ICICI bank card to buy an iPhone")
+      val wishDetailsEntity = Marshal(wishDetails).to[MessageEntity].futureValue
+
+      val request = Post("/wishes").withEntity(wishDetailsEntity)
+
+      request ~> addHeader("X-User-Id", "aman") ~> route ~> check {
+        status should ===(StatusCodes.BadRequest)
+      }
+    }
+
+    "not allow big message (POST /wishes)" in {
+      val wishDetails = WishDetails("small", "Need ICICI bank card to buy an iPhone")
+      val wishDetailsEntity = Marshal(wishDetails).to[MessageEntity].futureValue
+
+      val request = Post("/wishes").withEntity(wishDetailsEntity)
+
+      request ~> addHeader("X-User-Id", "aman") ~> route ~> check {
+        status should ===(StatusCodes.BadRequest)
+      }
+    }
+
     "be able to updated wishes (PUT /wishes)" in {
       val wishDetails = WishDetails("Need ICICI Bank Card", "Need ICICI bank card to buy an iPhone")
       val wishDetailsEntity = Marshal(wishDetails).to[MessageEntity].futureValue
@@ -39,7 +75,6 @@ class WishesRouteSpec extends WordSpec with Matchers with ScalaFutures with Scal
         val updatedWishDetailsEntity = Marshal(updatedWishDetails).to[MessageEntity].futureValue
 
         val putRequest = Put(s"/wishes/${postedWish.id.id}").withEntity(updatedWishDetailsEntity)
-
 
         putRequest ~> addHeader("X-User-Id", "aman") ~> route ~> check {
           status should ===(StatusCodes.Created)
