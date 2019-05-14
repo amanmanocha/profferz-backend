@@ -4,9 +4,10 @@ import java.util.UUID
 
 import akka.actor._
 import akka.persistence._
-import com.uptech.profferz.WishActor.{AddWish, UpdateWish, WishAdded, WishUpdated}
+import com.uptech.profferz.WishActor.{ AddWish, MakeOffer, OfferMade, UpdateWish, WishAdded, WishUpdated }
 import octopus.dsl._
 import octopus.syntax._
+import akka.pattern.ask
 
 import scala.util.Try
 
@@ -14,22 +15,31 @@ object WishActor {
 
   case class WishDetails(subject: String, message: String)
 
-  case class AddWish(userId: UserId, wishDetails: WishDetails) extends Command
+  case class OfferDetails(message: String)
 
-  case class UpdateWish(wishDetails: WishDetails) extends Command
+  case class AddWish(override val wishId: WishId, userId: UserId, wishDetails: WishDetails) extends Command
+
+  case class UpdateWish(override val wishId: WishId, userId: UserId, wishDetails: WishDetails) extends Command
+
+  case class MakeOffer(userId: UserId, wishId: WishId, offerDetails: OfferDetails) extends Command
 
   case class WishAdded(wishId: WishId, userId: UserId, wishDetails: WishDetails) extends Event
 
   case class WishUpdated(wishDetails: WishDetails) extends Event
+
+  case class OfferMade(offerId: OfferId, userId: UserId, wishId: WishId, offerDetails: OfferDetails) extends Event
 
   implicit val userIdValidator: Validator[UserId] = Validator[UserId]
     .rule(userId => Try(UUID.fromString(userId.id)).getOrElse(null) != null, "must be UUID")
 
   implicit val wishDetailsValidator: Validator[WishDetails] = Validator[WishDetails]
     .rule(_.subject.nonEmpty, "Subjecr must not be empty")
-      .rule(wishDetails => wishDetails.subject.length > 10, "Subject must have length greater than 10")
-      .rule(wishDetails => wishDetails.subject.length < 50, "Subject must have length less than 50")
-      .rule(wishDetails => wishDetails.message.length < 100, "Message must have length less than 100")
+    .rule(wishDetails => wishDetails.subject.length > 10, "Subject must have length greater than 10")
+    .rule(wishDetails => wishDetails.subject.length < 50, "Subject must have length less than 50")
+    .rule(wishDetails => wishDetails.message.length < 100, "Message must have length less than 100")
+
+  implicit val offerDetailsValidator: Validator[OfferDetails] = Validator[OfferDetails]
+    .rule(offerDetails => offerDetails.message.length < 100, "Message must have length less than 100")
 
 }
 
@@ -40,20 +50,23 @@ class WishActor(id: String) extends PersistentActor with ActorLogging {
 
   def updateState(event: Event): Unit = {
     event match {
-      case addWish@WishAdded(id, userId, wishDetails) => {
-        this.state = new Wish(id, userId, wishDetails)
+      case addWish @ WishAdded(id, userId, wishDetails) => {
+        this.state = new Wish(id, userId, wishDetails, Seq.empty)
       }
       case WishUpdated(wishDetails) => {
         this.state = state.copy(wishDetails = wishDetails)
+      }
+      case OfferMade(offerId, userId, wishId, offerDetails) => {
+        this.state = state.copy(offers = state.offers :+ Offer(offerId, wishId, userId, offerDetails))
       }
     }
   }
 
   val receiveCommand: Receive = {
-    case AddWish if state != null => {
+    case addWish @ AddWish if state != null => {
       sender ! Error(new IllegalStateException(s"Wish $id is already created"))
     }
-    case addWish@AddWish(userId, wishDetails) if state == null => {
+    case addWish @ AddWish(_, userId, wishDetails) if state == null => {
       val validationResult = addWish.validate
       if (validationResult.isValid) {
         persist(WishAdded(WishId(id), userId, wishDetails)) { event =>
@@ -63,17 +76,31 @@ class WishActor(id: String) extends PersistentActor with ActorLogging {
       } else {
         sender ! Error(new IllegalArgumentException(validationResult.errors.map(_.message).mkString(",")))
       }
-
     }
-    case UpdateWish if state == null => {
-      sender ! Error(new IllegalStateException(s"Wish $id is not yet created"))
+    case updateWish @ UpdateWish if state == null => {
+      sender ! Error(new IllegalStateException(s"Wish with id $id does not exist"))
     }
-    case updateWish@UpdateWish(wishDetails) => {
+    case updateWish @ UpdateWish(_, _, wishDetails) if state != null => {
       val validationResult = updateWish.validate
       if (validationResult.isValid) {
         persist(WishUpdated(wishDetails)) { event =>
           updateState(event)
           sender ! state
+        }
+      } else {
+        sender ! Error(new IllegalArgumentException(validationResult.errors.map(_.message).mkString(",")))
+      }
+    }
+    case makeOffer @ MakeOffer if state == null => {
+      sender ! Error(new IllegalStateException(s"Wish with id $id does not exist"))
+    }
+    case makeOffer @ MakeOffer(userId, wishId, offerDetails) if state != null => {
+      val validationResult = makeOffer.validate
+      if (validationResult.isValid) {
+        val offerId = OfferId(UUID.randomUUID.toString)
+        persist(OfferMade(offerId, userId, wishId, offerDetails)) { event =>
+          updateState(event)
+          sender ! state.offers.filter(offer => offer.id == offerId).iterator.next()
         }
       } else {
         sender ! Error(new IllegalArgumentException(validationResult.errors.map(_.message).mkString(",")))
