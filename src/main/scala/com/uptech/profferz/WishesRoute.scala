@@ -2,22 +2,20 @@ package com.uptech.profferz
 
 import java.util.UUID
 
-import akka.Done
-import akka.actor.{ActorSelection, ActorSystem, Props}
-import akka.http.scaladsl.model.StatusCodes.{BadRequest, InternalServerError}
-import akka.http.scaladsl.model.{HttpResponse, StatusCodes}
-import akka.http.scaladsl.server.Directives.{as, complete, concat, entity, headerValueByName, onComplete, onSuccess, pathEnd, pathPrefix, put, _}
-import akka.http.scaladsl.server.{ExceptionHandler, Route, _}
+import akka.actor.{ ActorSystem, Props }
+import akka.http.scaladsl.model.StatusCodes.{ BadRequest, InternalServerError, NotFound }
+import akka.http.scaladsl.model.{ HttpResponse, StatusCodes }
+import akka.http.scaladsl.server.Directives.{ as, complete, concat, entity, headerValueByName, onComplete, pathEnd, pathPrefix, put, _ }
 import akka.http.scaladsl.server.directives.MethodDirectives.post
 import akka.http.scaladsl.server.directives.PathDirectives.path
+import akka.http.scaladsl.server.{ ExceptionHandler, Route }
 import akka.pattern.ask
 import akka.util.Timeout
-import com.uptech.profferz.WishActor.{AddWish, UpdateWish, WishDetails}
-import com.uptech.profferz.WishesSupervisorActor.CreateWish
+import com.uptech.profferz.WishActor.{ AddWish, MakeOffer, OfferDetails, UpdateWish, WishDetails }
 
 import scala.concurrent.duration._
 import scala.language.postfixOps
-import scala.util.{Failure, Success}
+import scala.util.Success
 
 trait WishesRoute extends JsonSupport {
 
@@ -25,14 +23,16 @@ trait WishesRoute extends JsonSupport {
   implicit def system: ActorSystem
 
   // Required by the `ask` (?) method below
-  implicit lazy val timeout = Timeout(10.seconds) // usually we'd obtain the timeout from the system's configuration
+  implicit lazy val timeout = Timeout(5.seconds) // usually we'd obtain the timeout from the system's configuration
 
   lazy val wishesActor = system.actorOf(Props[WishesSupervisorActor])
 
   implicit val exceptionHandler = ExceptionHandler {
     case e: IllegalArgumentException =>
       complete(HttpResponse(BadRequest, entity = s"Invalid request ${e.getMessage}"))
-    case e:Exception =>
+    case e: NullPointerException =>
+      complete(HttpResponse(NotFound, entity = s"Not found ${e.getMessage}"))
+    case e: Exception =>
       complete(HttpResponse(InternalServerError, entity = s"Internal server error ${e.getMessage}"))
   }
 
@@ -44,7 +44,7 @@ trait WishesRoute extends JsonSupport {
           headerValueByName("X-User-Id") { userId =>
             post {
               entity(as[WishDetails]) { wishDetails =>
-                addWish(UUID.randomUUID().toString, userId, wishDetails)
+                addWish(WishId(UUID.randomUUID.toString), UserId(userId), wishDetails)
               }
             }
           }
@@ -54,37 +54,45 @@ trait WishesRoute extends JsonSupport {
         headerValueByName("X-User-Id") { userId =>
           put {
             entity(as[WishDetails]) { wishDetails: WishDetails =>
-              val updateWishCommand = UpdateWish(wishDetails)
-              val futureWishActorRef = system.actorSelection(wishesActor.path.child(s"${id}")).resolveOne()
-              onComplete(futureWishActorRef) {
-                case Success(actor) => {
-                  val futureWish = (actor ? updateWishCommand)
-                  onComplete(futureWish) {
-                    case Success(wish:Wish) => complete((StatusCodes.Created, wish))
-                    case Success(Error(e)) => throw e
-                  }
-
-                }
-                case Failure(e) => {
-                  addWish(id.toString, userId, wishDetails)
-                }
-              }
+              updateWish(WishId(id.toString), UserId(userId), wishDetails)
             }
           }
         }
-      }
-    )
+      },
+      path("wishes" / JavaUUID / "offers") { wishId =>
+        headerValueByName("X-User-Id") { userId =>
+          post {
+            entity(as[OfferDetails]) { offerDetails: OfferDetails =>
+              makeOffer(WishId(wishId.toString), UserId(userId), offerDetails)
+            }
+          }
+        }
+      })
 
-  private def addWish(wishId:String, userId: String, wishDetails: WishDetails) = {
-    val addWishCommand = AddWish(UserId(userId), wishDetails)
-    val futureActorCreated = (wishesActor ? CreateWish(wishId)).mapTo[Done]
-    onSuccess(futureActorCreated) { done =>
-      val ref: ActorSelection = system.actorSelection(wishesActor.path.child(wishId))
-      val futureWish = (ref ? addWishCommand)
-      onComplete(futureWish) {
-        case Success(Error(e)) => throw e
-        case Success(wish:Wish) => complete((StatusCodes.Created, wish))
-      }
+  def addWish(wishId: WishId, userId: UserId, wishDetails: WishDetails) = {
+    val addWishCommand = AddWish(wishId, userId, wishDetails)
+    onComplete(wishesActor ? addWishCommand) {
+      case Success(wish: Wish) => complete(StatusCodes.Created, wish)
+      case Success(offer: Offer) => complete(StatusCodes.Created, offer)
+      case Success(Error(e)) => throw e
     }
   }
+
+  def updateWish(wishId: WishId, userId: UserId, wishDetails: WishDetails) = {
+    val updateWishCommand = UpdateWish(wishId, userId, wishDetails)
+    onComplete(wishesActor ? updateWishCommand) {
+      case Success(wish: Wish) => complete(StatusCodes.Created, wish)
+      case Success(Error(e: IllegalStateException)) => addWish(wishId, userId, wishDetails)
+    }
+  }
+
+  def makeOffer(wishId: WishId, userId: UserId, offerDetails: OfferDetails) = {
+    val makeOfferCommand = MakeOffer(userId, wishId, offerDetails)
+    onComplete(wishesActor ? makeOfferCommand) {
+      case Success(wish: Wish) => complete(StatusCodes.Created, wish)
+      case Success(offer: Offer) => complete(StatusCodes.Created, offer)
+      case Success(Error(e)) => throw e
+    }
+  }
+
 }
