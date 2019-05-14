@@ -6,5 +6,5 @@ case class UserId(id: String)
 case class WishId(id: String)
 case class OfferId(id: String)
 
-case class Wish(id: WishId, userId: UserId = null, wishDetails: WishDetails, offers: Seq[Offer])
+case class Wish(id: WishId, userId: UserId = null, wishDetails: WishDetails, offers: Map[UserId, Offer])
 case class Offer(id: OfferId, wishId: WishId, userId: UserId, offerDetails: OfferDetails)
