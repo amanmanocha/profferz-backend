@@ -51,13 +51,13 @@ class WishActor(id: String) extends PersistentActor with ActorLogging {
   def updateState(event: Event): Unit = {
     event match {
       case addWish @ WishAdded(id, userId, wishDetails) => {
-        this.state = new Wish(id, userId, wishDetails, Seq.empty)
+        this.state = new Wish(id, userId, wishDetails, Map.empty)
       }
       case WishUpdated(wishDetails) => {
         this.state = state.copy(wishDetails = wishDetails)
       }
       case OfferMade(offerId, userId, wishId, offerDetails) => {
-        this.state = state.copy(offers = state.offers :+ Offer(offerId, wishId, userId, offerDetails))
+        this.state = state.copy(offers = state.offers + ((userId, Offer(offerId, wishId, userId, offerDetails))))
       }
     }
   }
@@ -77,10 +77,10 @@ class WishActor(id: String) extends PersistentActor with ActorLogging {
         sender ! Error(new IllegalArgumentException(validationResult.errors.map(_.message).mkString(",")))
       }
     }
-    case updateWish @ UpdateWish if state == null => {
+    case command:Command if state == null => {
       sender ! Error(new IllegalStateException(s"Wish with id $id does not exist"))
     }
-    case updateWish @ UpdateWish(_, _, wishDetails) if state != null => {
+    case updateWish @ UpdateWish(_, _, wishDetails) => {
       val validationResult = updateWish.validate
       if (validationResult.isValid) {
         persist(WishUpdated(wishDetails)) { event =>
@@ -91,19 +91,21 @@ class WishActor(id: String) extends PersistentActor with ActorLogging {
         sender ! Error(new IllegalArgumentException(validationResult.errors.map(_.message).mkString(",")))
       }
     }
-    case makeOffer @ MakeOffer if state == null => {
-      sender ! Error(new IllegalStateException(s"Wish with id $id does not exist"))
-    }
-    case makeOffer @ MakeOffer(userId, wishId, offerDetails) if state != null => {
+
+    case makeOffer @ MakeOffer(userId, wishId, offerDetails) => {
       val validationResult = makeOffer.validate
-      if (validationResult.isValid) {
-        val offerId = OfferId(UUID.randomUUID.toString)
-        persist(OfferMade(offerId, userId, wishId, offerDetails)) { event =>
-          updateState(event)
-          sender ! state.offers.filter(offer => offer.id == offerId).iterator.next()
-        }
+      if (state.offers.contains(userId)) {
+        sender ! Error(new IllegalStateException(s"$userId has already made offer to $userId"))
       } else {
-        sender ! Error(new IllegalArgumentException(validationResult.errors.map(_.message).mkString(",")))
+        if (validationResult.isValid) {
+          val offerId = OfferId(UUID.randomUUID.toString)
+          persist(OfferMade(offerId, userId, wishId, offerDetails)) { event =>
+            updateState(event)
+            sender ! state.offers(userId)
+          }
+        } else {
+          sender ! Error(new IllegalArgumentException(validationResult.errors.map(_.message).mkString(",")))
+        }
       }
     }
   }

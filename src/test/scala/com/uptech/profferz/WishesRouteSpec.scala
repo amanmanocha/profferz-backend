@@ -2,14 +2,14 @@ package com.uptech.profferz
 
 import akka.http.scaladsl.marshalling.Marshal
 import akka.http.scaladsl.model._
-import akka.http.scaladsl.testkit.ScalatestRouteTest
+import akka.http.scaladsl.testkit.{RouteTestTimeout, ScalatestRouteTest}
+import akka.testkit.TestDuration
 import com.uptech.profferz.WishActor.{OfferDetails, WishDetails}
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.{Matchers, WordSpec}
 
 import scala.concurrent.duration._
-import akka.http.scaladsl.testkit.RouteTestTimeout
-import akka.testkit.TestDuration
+
 class WishesRouteSpec extends WordSpec with Matchers with ScalaFutures with ScalatestRouteTest with WishesRoute {
   implicit val testTimeout = {
     RouteTestTimeout(5.seconds dilated)
@@ -91,7 +91,6 @@ class WishesRouteSpec extends WordSpec with Matchers with ScalaFutures with Scal
           entityAs[Wish].userId === "bob"
         }
       }
-
     }
 
     "allow users to make offers to wishes (POST /wishes/{id}/offers)" in {
@@ -116,7 +115,35 @@ class WishesRouteSpec extends WordSpec with Matchers with ScalaFutures with Scal
           entityAs[Offer].userId === "joe"
         }
       }
-
     }
+
+    "should not allow users to make multiple offers to wishes (POST /wishes/{id}/offers)" in {
+      val wishDetails = WishDetails("Need ICICI Bank Card", "Need ICICI bank card to buy an iPhone")
+      val wishDetailsEntity = Marshal(wishDetails).to[MessageEntity].futureValue
+
+      val postRequest = Post("/wishes").withEntity(wishDetailsEntity)
+      postRequest ~> addHeader("X-User-Id", "bob") ~> route ~> check {
+        val postedWish = entityAs[Wish]
+
+        val offer = OfferDetails("You can use mine. I will charge 10 percent.")
+        val offerDetailsEntity = Marshal(offer).to[MessageEntity].futureValue
+
+        val putRequest = Post(s"/wishes/${postedWish.id.id}/offers").withEntity(offerDetailsEntity)
+
+        putRequest ~> addHeader("X-User-Id", "joe") ~> route ~> check {
+          val postedOffer = entityAs[Offer]
+
+          val anotherOffer = OfferDetails("Another offer. I will charge 20 percent.")
+          val anotherOfferEntity = Marshal(anotherOffer).to[MessageEntity].futureValue
+
+          val putRequestFromSameUserToSameWish = Post(s"/wishes/${postedWish.id.id}/offers").withEntity(anotherOfferEntity)
+
+          putRequest ~> addHeader("X-User-Id", "joe") ~> route ~> check {
+            status should ===(StatusCodes.InternalServerError)
+          }
+        }
+      }
+    }
+
   }
 }
