@@ -1,6 +1,8 @@
 package com.uptech.profferz
 
-trait Event
+trait Event  {
+  def wishId: WishId
+}
 trait Command {
   def wishId: WishId
 }
