@@ -25,7 +25,7 @@ object WishActor {
 
   case class WishAdded(wishId: WishId, userId: UserId, wishDetails: WishDetails) extends Event
 
-  case class WishUpdated(wishDetails: WishDetails) extends Event
+  case class WishUpdated(wishId: WishId, wishDetails: WishDetails) extends Event
 
   case class OfferMade(offerId: OfferId, userId: UserId, wishId: WishId, offerDetails: OfferDetails) extends Event
 
@@ -53,12 +53,7 @@ class WishActor(id: String) extends PersistentActor with ActorLogging {
       case addWish @ WishAdded(id, userId, wishDetails) => {
         this.state = new Wish(id, userId, wishDetails, Map.empty)
       }
-      case WishUpdated(wishDetails) => {
-        this.state = state.copy(wishDetails = wishDetails)
-      }
-      case OfferMade(offerId, userId, wishId, offerDetails) => {
-        this.state = state.copy(offers = state.offers + ((userId, Offer(offerId, wishId, userId, offerDetails))))
-      }
+      case _ => state = state.updateState(event)
     }
   }
 
@@ -80,10 +75,10 @@ class WishActor(id: String) extends PersistentActor with ActorLogging {
     case command:Command if state == null => {
       sender ! Error(new IllegalStateException(s"Wish with id $id does not exist"))
     }
-    case updateWish @ UpdateWish(_, _, wishDetails) => {
+    case updateWish @ UpdateWish(wishId, _, wishDetails) => {
       val validationResult = updateWish.validate
       if (validationResult.isValid) {
-        persist(WishUpdated(wishDetails)) { event =>
+        persist(WishUpdated(wishId, wishDetails)) { event =>
           updateState(event)
           sender ! state
         }

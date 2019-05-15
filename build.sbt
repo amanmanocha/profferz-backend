@@ -18,6 +18,7 @@ lazy val root = (project in file(".")).
       "com.typesafe.akka" %% "akka-http-xml" % akkaHttpVersion,
       "com.typesafe.akka" %% "akka-stream" % akkaVersion,
       "com.typesafe.akka" %% "akka-persistence" % akkaVersion,
+      "com.typesafe.akka" %% "akka-persistence-query" % akkaVersion,
       "com.geteventstore" %% "akka-persistence-eventstore" % "6.0.0",
       "com.github.krzemin" %% "octopus" % "0.3.3",
 
